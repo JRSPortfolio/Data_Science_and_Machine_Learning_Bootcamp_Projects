@@ -18,7 +18,7 @@ df = pd.read_csv('K_Nearest_Neighbors/KNN_Project_Data')
 print(df.head())
 
 # Use seaborn on the dataframe to create a pairplot with the hue indicated by the TARGET CLASS column.
-# sns.pairplot(df, diag_kind = 'hist', hue = 'TARGET CLASS', palette = 'YlGnBu', height = 1.2)
+sns.pairplot(df, diag_kind = 'hist', hue = 'TARGET CLASS', palette = 'YlGnBu', height = 1.2)
 
 # Create a StandardScaler() object called scaler.
 scaler = StandardScaler()
