@@ -157,3 +157,8 @@ dmypy.json
 
 
 db_url.py
+
+#large files that were compressed
+lending_club_info.csv
+lending_club_loan_engineered.csv
+lending_club_loan_two.csv
