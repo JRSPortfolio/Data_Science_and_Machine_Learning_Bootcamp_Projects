@@ -24,11 +24,11 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.callbacks import EarlyStopping
-from keras.utils import to_categorical
-from keras.models import load_model
+from tensorflow.keras.models import Sequential #type: ignore
+from tensorflow.keras.layers import Dense #type: ignore
+from tensorflow.keras.callbacks import EarlyStopping #type: ignore
+from tensorflow.keras.utils import to_categorical #type: ignore
+from tensorflow.keras.models import load_model #type: ignore
 
 
 #Recreating Dataframe format

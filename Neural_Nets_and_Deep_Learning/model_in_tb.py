@@ -2,71 +2,103 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.callbacks import TensorBoard
+from tensorflow.keras.models import Sequential #type: ignore
+from tensorflow.keras.layers import Dense #type: ignore
+from tensorflow.keras.optimizers import Adam  #type: ignore
+from tensorflow.keras.callbacks import TensorBoard #type: ignore
+from tensorflow.keras.metrics import  BinaryAccuracy, FalseNegatives, FalsePositives, TrueNegatives, TruePositives, Precision, Recall, AUC #type: ignore
+from tensorflow.keras.callbacks import Callback #type: ignore
+import tensorflow as tf
 import tensorboard
+from tensorboard.plugins.hparams import api as hp
+from datetime import datetime as dt
 
 
-df = pd.read_csv('Neural_Nets_and_Deep_Learning/lending_club_loan_engineered.csv', index_col = 0)
+def get_data_splits():
+    df = pd.read_csv('Neural_Nets_and_Deep_Learning/lending_club_loan_engineered.csv', index_col = 0)
 
-X = df.drop('loan_repaid', axis = 1)
-y = df['loan_repaid']
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state = 101)
+    X = df.drop('loan_repaid', axis = 1)
+    y = df['loan_repaid']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state = 101)
 
-scaler = MinMaxScaler()
-X_train = scaler.fit_transform(X_train)
-X_test = scaler.fit_transform(X_test)
-
-
-def make_fit_model(title: str, neurons: list, metrics: list, b_size: int, eps: int):
-    model_car = title
-    log_dir = f'/tflogs_fit/nndl_project/{title}'
-    board = TensorBoard(log_dir = log_dir, histogram_freq = 1, write_graph = True, update_freq = 'epoch')
+    scaler = MinMaxScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.fit_transform(X_test)
     
+    return X_train, X_test, y_train, y_test
+
+class MakeParams(dict):
+    def __init__(self, epochs: int, units: list, l_rate: list, b_size: list):
+        super(MakeParams, self).__init__()
+        self['epochs'] = epochs
+        self['num_units'] = hp.HParam(f'Dense_Layer_{units}', hp.Discrete(units))
+        self['l_rate'] = hp.HParam('Learnin_Rate', hp.Discrete(l_rate))    
+        self['b_size'] = hp.HParam('Batch_Size', hp.Discrete(b_size))
+
+def tune_model_params(X_train, X_test, y_train, y_test, params: MakeParams):    
+    metrics = [TruePositives(name = 'true_positives'), FalsePositives(name = 'false_positives'), TrueNegatives(name = 'true_negatives'), FalseNegatives(name = 'false_negatives'),
+               BinaryAccuracy(name = 'accuracy'), Precision(name = 'precision'), Recall(name = 'recall'), AUC(name = 'auc')]
+
+    log_dir = f"Neural_Nets_and_Deep_Learning/tflogs_fit/{dt.now().strftime('%d-%m-%Y_%H%M')}"
+    
+    num_units = params['num_units'].domain.values
+    print(num_units)
+    epochs = params['epochs']
+        
+    for b_size in params['b_size'].domain.values:
+        for rate in params['l_rate'].domain.values:
+            loss, accuracy, precision, recall, hparams = make_model(log_dir, b_size, rate, num_units, epochs, metrics, X_train, y_train, X_test, y_test)
+            eval_model(log_dir, b_size, rate, len(num_units), epochs, loss, accuracy, precision, recall, hparams)
+                 
+def make_model(logdir: str, batch_size, learning_rate, num_units, epochs, metrics: list, X_train, y_train, X_test, y_test):
     model = Sequential()
-    
-    for n in neurons:
-        model.add(Dense(n, activation = 'relu'))
+    layer = 0
+    hparams = {}
+    for units in num_units:
+        hparams[f'Layer_{str(layer)}'] = units 
+        layer += 1
+        model.add(Dense(units, activation = 'relu'))       
     model.add(Dense(1, activation = 'sigmoid'))
-    model.compile(loss = 'binary_crossentropy', optimizer = 'adam', metrics = metrics)
-    model.fit(x = X_train, y = y_train, epochs = eps, validation_data = (X_test, y_test), batch_size = b_size, callbacks = [board])
+    
+    hparams[f'Layer_{str(layer)}'] = 1
+    board = TensorBoard(log_dir = f'{logdir}/cb/bs{batch_size}_lr{learning_rate}_l{units}', histogram_freq = 1, write_graph = True, update_freq = 'epoch')
+    
+    model.compile(loss = 'binary_crossentropy', optimizer = Adam(learning_rate = learning_rate), metrics = metrics)
+    model.fit(x = X_train, y = y_train, epochs = epochs, validation_data = (X_test, y_test), batch_size = batch_size, callbacks = [board])
+    
+    loss, _, _, _, _, accuracy, precision, recall, _ = model.evaluate(X_test, y_test)
+    return loss, accuracy, precision, recall, hparams
 
+def eval_model(logdir, batch_size, learning_rate, num_units, epochs, loss, accuracy, precision, recall, hparams):
+    file_writer = tf.summary.create_file_writer(f'{logdir}/fw/bs{batch_size}_lr{learning_rate}_l{num_units}')
+    with file_writer.as_default():
+        hyperp = {'Neurons' : num_units,
+                  'Epochs' : epochs,
+                  'Learnin_Rate' : learning_rate,
+                  'Batch_Size' : batch_size}
+        hparams.update(hyperp)
+        hp.hparams(hparams)
+
+        tf.summary.scalar('Loss', loss, step = 1)
+        tf.summary.scalar('Accuracy', accuracy, step = 1)
+        tf.summary.scalar('Precision', precision, step = 1)
+        tf.summary.scalar('Recall', recall, step = 1)
+    
+    
+def predict_eval_model(model: Sequential, X_test, y_test):
     predictions = model.predict(X_test)
     predicted_classes = (predictions > 0.5).astype('int32')
-    print(title)
     print(f'Classification Report:\n{classification_report(y_test, predicted_classes)}')
     print(f'Confusion Matrix:\n{confusion_matrix(y_test, predicted_classes)}')
     print('____________________\n____________________')
 
-# metrics = ['accuracy', 'precision', 'recall', 'binary_accuracy']
-# make_fit_model('512_256_128_64_32_16_8_ep12_bs128', [512, 256, 128, 64, 32, 16, 8], metrics, 128, 12)
-# make_fit_model('160_80_40_20_10_5_bs128_ep12', [160, 80, 40, 20, 10, 5], metrics, 128, 12)
-# make_fit_model('200_150_100_50_25_10_bs128_ep12', [200, 150, 100, 50, 25, 10], metrics, 128, 12)
-# make_fit_model('400_300_200_100_50_25_10_ep12_bs256', [400, 300, 200, 100, 50, 25, 10], metrics, 256, 12)
-# make_fit_model('80_60_40_20_10_5_ep12_bs64', [80, 60, 40, 20, 10, 5], metrics, 64, 12)
 
-# metrics = ['accuracy', 'precision', 'recall', 'binary_accuracy']
-# make_fit_model('512_256_128_64_32_16_8_ep5_bs128', [512, 256, 128, 64, 32, 16, 8], metrics, 128, 5)
-# make_fit_model('512_256_128_64_32_16_8_ep5_bs128_acc-ba', [512, 256, 128, 64, 32, 16, 8], ['accuracy', 'binary_accuracy'], 128, 5)
-# make_fit_model('512_256_128_64_32_16_8_ep12_bs128_r', [512, 256, 128, 64, 32, 16, 8], ['recall'], 128, 5)
-# make_fit_model('80_60_40_20_10_5_ep4_bs64_acc-ba', [80, 60, 40, 20, 10, 5], ['accuracy', 'binary_accuracy'], 64, 4)
-# make_fit_model('80_60_40_20_10_5_ep4_bs64_r', [80, 60, 40, 20, 10, 5], ['recall'], 64, 4)
-# make_fit_model('80_60_40_20_10_5_ep4_bs64', [80, 60, 40, 20, 10, 5], metrics, 64, 4)
+def main():
+    X_train, X_test, y_train, y_test = get_data_splits()
+    
+    params = MakeParams(5, [10, 20, 30], [0.01, 0.001], [128])
+    tune_model_params(X_train, X_test, y_train, y_test, params)
 
-# make_fit_model('512_256_128_64_32_16_8_ep12_bs128_pr', [512, 256, 128, 64, 32, 16, 8], ['precision', 'recall'], 128, 5)
-# make_fit_model('80_60_40_20_10_5_ep4_bs64_pr', [80, 60, 40, 20, 10, 5], ['precision', 'recall'], 64, 4)
-
-# make_fit_model('80_40_20_10_5_ep15_bs32_apr', [80, 40, 20, 10, 5], ['accuracy', 'precision', 'recall'], 32, 15)
-# make_fit_model('100_50_25_10_5_ep15_bs32_apr', [100, 50, 25, 10, 5], ['accuracy', 'precision', 'recall'], 32, 15)
-# make_fit_model('100_50_10_5_ep15_bs32_apr', [100, 50, 10, 5], ['accuracy', 'precision', 'recall'], 32, 15)
-# make_fit_model('128_64_32_16_8_4_ep15_bs32_apr', [128, 64, 32, 16, 8, 4], ['accuracy', 'precision', 'recall'], 32, 15)
-
-# make_fit_model('80_40_20_10_5_ep4_bs32_apr', [80, 40, 20, 10, 5], ['accuracy', 'precision', 'recall'], 32, 4)
-# make_fit_model('128_64_32_16_8_4_ep4_bs32_apr', [128, 64, 32, 16, 8, 4], ['accuracy', 'precision', 'recall'], 32, 4)
-
-metrics = ['accuracy', 'precision', 'recall', 'binary_accuracy']
-make_fit_model('512_128_32_8_ep50_accpr128', [512, 128, 32, 8], ['accuracy', 'precision', 'recall'], 128, 50)
-make_fit_model('512_128_32_8_ep50_accba128', [512, 128, 32, 8], ['accuracy', 'binary_accuracy'], 128, 50)
-make_fit_model('80_40_5_ep4_ep50_accpr64', [80, 40, 5], ['accuracy', 'precision', 'recall'], 64, 50)
-make_fit_model('80_40_5_ep4_ep50_accba64', [80, 40, 5], ['accuracy', 'binary_accuracy'], 64, 50)
+if __name__ == '__main__':
+    main()
+    # predict_eval_model(model, X_test, y_test)
